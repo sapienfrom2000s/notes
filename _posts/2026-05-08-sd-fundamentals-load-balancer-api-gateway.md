@@ -1,14 +1,19 @@
 ---
-title: "System Design Fundamentals - Load Balancer"
-date: 2027-01-14
+title: "System Design Fundamentals - Load Balancer & API Gateway"
+date: 2026-05-08
 categories: [System Design]
-tags: [load balancer]
+tags: [load balancer, api gateway]
 ---
 
-## Introduction
+## Load Balancer
 
-A **load balancer** sits between clients and servers, distributing incoming traffic across a pool of backend servers to ensure high availability, 
-reliability, and performance. It eliminates single points of failure and prevents any one server from being overwhelmed.
+**Why it was needed:** In early web architectures, applications ran on a single, powerful server. As traffic grew, vertical scaling (buying bigger hardware) hit physical limits and became cost-prohibitive.
+
+**What happens if we don't use it:** Without a load balancer, all clients connect directly to a single server. If that server crashes or is overwhelmed by traffic spikes, the entire application goes down (a single point of failure). Alternatively, relying purely on DNS to point to different servers doesn't account for server health or connection state.
+
+**Benefits over previous technology:** Unlike a single-server setup or basic DNS round-robin, a load balancer enables horizontal scaling (adding more cheap commodity servers), actively monitors server health to pull dead nodes from rotation, and guarantees high availability.
+
+A **load balancer** sits between clients and servers, distributing incoming traffic across a pool of backend servers to ensure high availability, reliability, and performance. It eliminates single points of failure and prevents any one server from being overwhelmed.
 
 *Example: Netflix uses LBs so that 1 million concurrent users aren't all hitting the same video-streaming server.*
 
@@ -17,7 +22,7 @@ reliability, and performance. It eliminates single points of failure and prevent
 2. Web servers ↔ App/cache servers
 3. App servers ↔ Database
 
-## Key Concepts
+### Key Concepts
 
 - **LB Algorithm** — decides which server gets the next request. e.g. Round-robin, Least Connections, IP Hash
 - **Health Checks** — periodic pings to detect dead servers; removes them from pool. e.g. HTTP GET `/health` every 10s
@@ -25,7 +30,7 @@ reliability, and performance. It eliminates single points of failure and prevent
 - **SSL/TLS Termination** — decrypts HTTPS at the LB; backends get plain HTTP, offloading CPU-heavy crypto from app servers
 - **Backend Server Pool** — the set of servers the LB routes to. e.g. 10 EC2 instances behind an AWS ALB
 
-## How a Request Flows
+### How a Request Flows
 
 ```
 Client → LB (picks server via algorithm) → Backend Server → LB → Client
@@ -39,7 +44,7 @@ Client → LB (picks server via algorithm) → Backend Server → LB → Client
 
 ---
 
-## Load Balancing Algorithms
+### Load Balancing Algorithms
 
 The goal of any LB algorithm: prevent overload, maximize throughput, minimize latency.
 
@@ -70,9 +75,11 @@ Routes to the server consuming least bandwidth right now. Best for video streami
 **Custom Load**
 You define the metric (CPU%, memory, app KPIs) and routing rules. Best for complex apps with unique resource profiles. Can encode domain-specific knowledge (e.g. route ML inference to GPU-heavy nodes only). Hardest to configure correctly; a bad metric definition silently degrades performance.
 
-### Consistent Hashing
+#### Consistent Hashing
 
-Simple modulo hashing (`hash(key) % n`) is fragile — remove one server and `n` changes, so nearly every client remaps to a different server. All session state is lost at once.
+**Why it was needed:** Simple modulo hashing (`hash(key) % n`) is fragile because adding or removing a server changes `n`, causing nearly every client to remap to a different server.
+**What happens if we don't use it:** Removing one node from a cluster causes a massive re-shuffling of traffic. All session state or cache data is lost at once, leading to sudden cache stampedes and database overloads.
+**Benefits over previous technology:** By mapping servers and keys to a logical ring, only a fraction of keys (`k/n`) are remapped when a server is added or removed, preventing mass session disruption and preserving cache stability.
 
 Consistent hashing fixes this. The idea:
 - Arrange a logical ring of 2³² slots (0 to 2³²−1).
@@ -92,7 +99,7 @@ S2 removed → those keys now walk to S3. S1 and its keys untouched.
 
 *Why it matters for LBs:* used in IP Hash to prevent mass session disruption on topology changes. Also the foundation of distributed caches (Memcached, DynamoDB, Cassandra ring) — understanding it shows you can reason about distributed state, not just traffic routing.
 
-### Quick decision guide
+#### Quick decision guide
 
 ```
 Servers identical + stateless?          → Round Robin or Random
@@ -105,17 +112,16 @@ Traffic is bandwidth-heavy (video/CDN)? → Least Bandwidth
 None of the above fit?                  → Custom Load
 ```
 
-### IP Hash example (interview-ready)
+#### IP Hash example (interview-ready)
 3 servers. Client IP `192.168.1.10` → `hash(IP) = 17` → `17 % 3 = 2` → Server C.  
 Same client always hits Server C — natural session persistence with no cookie needed.  
 *Caveat:* remove Server C and `17 % 2 = 1` → client now lands on Server B (session lost).
 
 ---
 
-## Uses of Load Balancing
+### Uses of Load Balancing
 
 **1. High Availability & Fault Tolerance**
-*(This is about the LB protecting backend servers — keeping them available to users.)*
 LB performs continuous health checks on backend servers. If a server fails to return a 200 OK within the timeout, it's removed from rotation instantly and traffic is rerouted to healthy servers.
 
 *Example (Uber):* 50 API servers, Server #3 freezes from a memory leak. Without LB: 2% of users hit a dead server and churn to Lyft. With LB: health check fails, Server #3 is cut, traffic spreads across remaining 49 — users notice nothing.
@@ -135,18 +141,23 @@ LB acts as a reverse proxy — backend IPs are never exposed to the internet. Ca
 
 *Example (Social Media):* Botnet launches a SYN Flood on the login page. AWS ALB + WAF detects the pattern, drops the connections at the edge. Backend servers only see legitimate traffic.
 
-**5. SSL Termination**
+**5. SSL/TLS Termination**
+
+**Why it was needed:** Decrypting HTTPS traffic requires significant CPU cycles. Managing SSL certificates across hundreds of backend servers is operationally complex and error-prone.
+**What happens if we don't use it:** Every single backend server must spend a large chunk of its CPU capacity purely on cryptographic math rather than business logic. Updating an expiring SSL certificate requires touching every single server in the fleet.
+**Benefits over previous technology:** Centralizes certificate management at the edge. By decrypting traffic at the load balancer (client speaks HTTPS to LB, LB speaks HTTP to internal backends), backend CPU usage drops dramatically, freeing up capacity for actual application logic.
+
 HTTPS decryption is CPU-heavy. Offload it to the LB — client speaks HTTPS to LB, LB speaks HTTP to backends inside the private network. Backends spend cycles on business logic instead of crypto math.
 
 *Example (HFT Dashboard):* Backends at 90% CPU, 30% of that just from OpenSSL. Move SSL certs to the LB → backend CPU drops to 60% → effectively 1/3 more capacity with no new hardware.
 
 ---
 
-## Load Balancing Types
+### Load Balancing Types
 
 These 8 types fall into 3 buckets — a useful mental model for interviews:
 
-### Bucket A: Implementation (how is the LB built?)
+#### Bucket A: Implementation (how is the LB built?)
 
 **Hardware LB**
 A dedicated physical appliance using ASICs/FPGAs. Highest throughput, lowest latency, but expensive and hard to scale — you buy more boxes. Best for large enterprises with predictable, high-volume traffic. *Example: F5 BIG-IP in front of a bank's data center.*
@@ -157,7 +168,7 @@ Runs on a general-purpose server or VM (e.g. Nginx, HAProxy). Cheaper, flexible,
 **Cloud-based LB**
 Fully managed service from a cloud provider (AWS ALB/NLB, GCP Load Balancer, Azure LB). Auto-scales, zero maintenance, pay-per-use. Tradeoff: less control, potential vendor lock-in. *Example: AWS ALB routing API requests to an ECS cluster.*
 
-### Bucket B: Scope (how wide is the traffic distribution?)
+#### Bucket B: Scope (how wide is the traffic distribution?)
 
 **DNS Load Balancing**
 A domain resolves to multiple IPs; clients get different IPs on each lookup (round-robin or geo-based). No server health awareness, no session persistence. Updates are slow due to TTL caching — a dead server can still receive traffic for minutes. *Example: Cloudflare has ~300 edge nodes worldwide. When you visit `example.com`, your DNS resolver queries Cloudflare's nameserver. It responds with the IP of the nearest edge node based on your location — a user in Mumbai gets a Mumbai IP, a user in London gets a Frankfurt IP. The browser connects to that edge node, not the origin server. No health checks, no connection state — just DNS returning different IPs to different clients.*
@@ -174,7 +185,7 @@ Routes a client to a server based on their geographic location, determined from 
 - **Data residency** — GDPR requires EU user data to stay in the EU. Geo-routing ensures EU traffic never touches US servers.
 - **Compliance & content rules** — stream licensing, regional pricing, or legal restrictions enforced at the routing layer.
 
-### Bucket C: Logic (what does it inspect to route?)
+#### Bucket C: Logic (what does it inspect to route?)
 
 **Layer 4 (Transport Layer)**
 Routes based on IP + port from the TCP/UDP header only. Never opens the packet. Fast and protocol-agnostic, but "dumb" — can't distinguish `/api/users` from `/api/orders`. *Example: Gaming platform distributing UDP traffic across game servers by IP + port.*
@@ -182,16 +193,15 @@ Routes based on IP + port from the TCP/UDP header only. Never opens the packet. 
 **Layer 7 (Application Layer)**
 Reads HTTP headers, cookies, URL paths, and body content to make routing decisions. Enables content-based routing, sticky sessions, SSL termination, A/B testing. Slower than L4 due to deep packet inspection. *Example: Microservices gateway routing `/api/payments` to the payments service and `/api/search` to the search service.*
 
-### L4 vs L7 — the key tradeoff
+#### L4 vs L7 — the key tradeoff
 
 L4 is faster (no content inspection) but blind to application context. L7 is smarter (can route by URL, inject headers, terminate SSL) but adds latency. Most modern systems use L7 at the edge and L4 internally where raw throughput matters.
 
 ---
 
-## High Availability & Fault Tolerance for Load Balancers
-*(This section is about making the LB itself resilient — not the backends it serves.)*
+### High Availability & Fault Tolerance for Load Balancers
 
-### Redundancy — failover configurations
+#### Redundancy — failover configurations
 
 **Active-Passive — implemented via VRRP**
 One LB handles all traffic; the other sits idle on standby. VRRP (Virtual Router Redundancy Protocol) lets both nodes share a single Virtual IP (VIP). The MASTER owns the VIP and sends a multicast heartbeat every ~1s. If BACKUPs don't hear it for `(3 × interval)` seconds, the highest-priority BACKUP promotes itself, claims the VIP, and sends a gratuitous ARP to update the network's MAC-to-IP mapping. Clients keep hitting the same VIP — they never know a failover happened. Failover takes ~3s. Simple but the standby node sits idle.
@@ -203,7 +213,7 @@ Multiple LB instances all process traffic simultaneously. BGP (Border Gateway Pr
 
 *Example: Cloudflare runs the same IP (`1.1.1.1`) on nodes in 300+ cities. If the Frankfurt node goes down, BGP withdraws its route and queries automatically reroute to the next closest node.*
 
-### Split-Brain (Active-Active failure mode)
+#### Split-Brain (Active-Active failure mode)
 
 Split-brain happens when two LB nodes lose connectivity to *each other* but can still reach clients and backends. Each node thinks the other is dead and starts handling all traffic independently — two LBs now have diverging views of session state, connection counts, and routing decisions.
 
@@ -212,7 +222,11 @@ This is particularly dangerous for stateful LBs where session data is node-local
 - Externalize all state (Redis, DB) so both nodes read/write the same source of truth — diverging local state becomes irrelevant.
 - Design for it: prefer stateless LBs + externalized session stores so split-brain has no correctness impact, only a brief availability blip.
 
-### Health Checks & Monitoring
+#### Health Checks & Monitoring
+
+**Why it was needed:** Servers crash, get stuck in garbage collection, or lose database connectivity. A load balancer needs a way to know which servers are actually capable of serving traffic.
+**What happens if we don't use it:** The load balancer blindly sends requests to a dead or frozen server. Users experience timeouts, 502 Bad Gateway errors, and overall reduced availability.
+**Benefits over previous technology:** Continuously probes backend instances and automatically removes unhealthy nodes from the routing pool. This ensures users only ever interact with healthy servers, preventing cascading failures.
 
 LBs run periodic health checks against backend servers — e.g. HTTP GET `/health` must return 200 within 2s. Failing servers are pulled from the pool automatically, preventing traffic from hitting dead nodes and avoiding cascading failures.
 
@@ -228,7 +242,7 @@ When a pulled server comes back online and the LB re-admits it, all the traffic 
 
 Fix with slow-start: re-introduce the recovered server at a low traffic weight (e.g. 10%) and ramp up over 30–60s as it proves stability. Nginx and AWS ALB both support this natively. Without slow-start, recovery becomes a repeated failure cycle.
 
-### State Synchronization (Active-Active & Active-Passive)
+#### State Synchronization (Active-Active & Active-Passive)
 
 When multiple LB instances run in parallel, they need a consistent view of the world — which backends are healthy, what session data exists, what config is current. Two approaches:
 
@@ -238,7 +252,7 @@ When multiple LB instances run in parallel, they need a consistent view of the w
 
 ---
 
-## Stateless vs. Stateful Load Balancing
+### Stateless vs. Stateful Load Balancing
 
 **Stateless LB**
 Makes routing decisions purely from the incoming request — IP, URL, headers. No memory of past requests. Fast and horizontally scalable since any LB node can handle any request.
@@ -252,7 +266,12 @@ Stateful LB has two sub-types:
 
 **Source IP Affinity** — pins a client to a server based on their IP address (`hash(IP) % n`). Simple, no cookie needed. Breaks on mobile networks where IPs change frequently (carrier NAT, switching towers).
 
-**Session Affinity (Sticky Sessions)** — LB injects a cookie (e.g. `SERVERID=s2`) on the first response. All subsequent requests carry that cookie and the LB reads it to route to the correct server. More reliable than IP affinity since it survives IP changes.
+**Session Affinity (Sticky Sessions)**
+**Why it was needed:** Legacy or stateful applications store user session data (like login status or shopping carts) in local memory on a specific server, rather than a shared external database.
+**What happens if we don't use it:** A user logs into Server A, but their next request is routed to Server B (which doesn't have their session). The user is randomly logged out or loses their cart contents.
+**Benefits over previous technology:** Ensures that once a user starts interacting with a specific server, all their subsequent requests are routed back to that same server, preserving their state without requiring immediate application rewrites to externalize sessions.
+
+LB injects a cookie (e.g. `SERVERID=s2`) on the first response. All subsequent requests carry that cookie and the LB reads it to route to the correct server. More reliable than IP affinity since it survives IP changes.
 
 **When to use which:**
 
@@ -262,25 +281,25 @@ Stateful — use only when you can't externalize session state, or for legacy ap
 
 ---
 
-## Scalability & Performance
+### Scalability & Performance
 
-### Scaling the LB itself
+#### Scaling the LB itself
 
 **Vertical scaling** — give the existing LB more CPU, memory, and NIC bandwidth. Simple but hits a hard ceiling. Good for short-term relief, not a long-term strategy.
 
 **Horizontal scaling** — add more LB instances. Requires traffic to be split across them, typically via DNS LB (multiple A records) or a dedicated upstream LB tier. Pairs naturally with active-active. No theoretical ceiling — just add nodes.
 
-### Connection & Request Rate Limiting
+#### Connection & Request Rate Limiting
 
 Overloading an LB is as bad as overloading a backend. LBs can enforce rate limits based on IP, client domain, or URL pattern — e.g. max 100 req/s per IP. This serves two purposes: prevents any single client from monopolizing resources, and blunts DoS/DDoS attacks before they reach backend servers.
 
 *Example: AWS ALB + WAF rate rule — block any IP sending >1000 req/10s to `/api/login`.*
 
-### Caching & Content Optimization
+#### Caching & Content Optimization
 
 LBs can cache static assets (images, CSS, JS) at the edge, serving them directly without hitting backend servers. Some also support response compression (gzip/brotli) and minification, reducing payload size and bandwidth. This is more commonly handled by a CDN layer in front of the LB, but the capability exists.
 
-### LB Latency Impact
+#### LB Latency Impact
 
 Every LB adds one extra network hop. The overhead is usually <1ms on a local network, but it compounds — client → LB → app server → LB → client is two extra hops vs. direct. Strategies to minimize:
 
@@ -292,7 +311,7 @@ Every LB adds one extra network hop. The overhead is usually <1ms on a local net
 
 ---
 
-## Challenges of Load Balancers
+### Challenges of Load Balancers
 
 **Single Point of Failure** — if the LB itself goes down, the entire app goes down. Fix: run multiple LB instances in active-passive (VRRP) or active-active (BGP) configuration.
 
@@ -310,7 +329,245 @@ Every LB adds one extra network hop. The overhead is usually <1ms on a local net
 
 ---
 
+## API Gateway
+
+**Why it was needed:** As architectures shifted from monoliths to microservices, clients had to keep track of dozens of different service endpoints, protocols, and authentication methods. This made client-side logic incredibly complex and coupled clients tightly to backend implementations.
+
+**What happens if we don't use it:** Clients would have to communicate directly with each individual microservice. This means making multiple round trips over the network to gather data (e.g., fetching user data, then order data), handling authentication independently for every service, and exposing internal network structures to the public internet.
+
+**Benefits over previous technology:** Compared to direct client-to-microservice communication, an API Gateway provides a single, unified entry point. It reduces client network round trips via response aggregation, offloads cross-cutting concerns (like auth and rate limiting) from the microservices, and hides the internal backend architecture from the outside world.
+
+An **API Gateway** is a server-side component that acts as the **single entry point** for all client traffic into a backend system. It sits between clients (browser, mobile, other services) and your backend microservices — receiving requests, routing them to the right service, and returning responses.
+
+*Example: In a food delivery app, a single POST `/order` from the mobile app hits the API gateway, which fans out to the inventory service, pricing service, and notification service — the client talks to one endpoint, not three.*
+
+```
+Client → API Gateway → [Auth + Rate Limit + Route] → Microservice(s)
+```
+
+---
+
+### Is an API Gateway just an L7 Load Balancer?
+
+Essentially yes — but it goes further. An API gateway operates at L7 and does everything an L7 LB does (content-based routing, SSL termination, header inspection), but adds a layer of **traffic governance** on top.
+
+Both read HTTP content and route by URL/headers. The difference is what happens next:
+- **L7 LB** stops there — it picks an instance and forwards the request.
+- **API Gateway** also enforces auth, rate limits, transforms the request/response, translates protocols (REST↔gRPC), and can aggregate responses from multiple services. Its primary concern is not just *which instance* but *which service* and *what to do before and after*.
+
+Auth and rate limiting are bolt-ons for an L7 LB; they are core features of a gateway. Response aggregation and protocol translation don't exist at the LB layer at all.
+
+Some tools blur the line — Nginx with plugins or AWS ALB with Lambda authorizers can approximate a gateway — but purpose-built gateways (Kong, Apigee, AWS API Gateway) are the right tool when you need the full feature set.
+
+**Rule of thumb:** Route and distribute only → L7 LB. Govern traffic (who can call what, how often, in what shape) → API Gateway.
+
+---
+
+### API Gateway vs. Load Balancer
+
+**Primary job**
+- API Gateway: route to the *right service* based on URL, method, headers.
+- Load Balancer: spread requests *evenly* across instances of the same service.
+
+**Traffic type**
+- API Gateway: API traffic — HTTP, gRPC, WebSocket.
+- Load Balancer: anything — TCP, UDP, HTTP.
+
+**Routing logic**
+- API Gateway: content-aware — URL path, headers, body.
+- Load Balancer: connection-aware — IP, port, server health, weight.
+
+**Cross-cutting concerns**
+- API Gateway: auth, rate limiting, logging, transformation.
+- Load Balancer: SSL termination, health checks, session persistence.
+
+*Example: `/api/payments` hits the gateway → gateway routes to the payments service → an LB distributes that request across 10 instances of the payments service.*
+
+**Key insight:** A load balancer distributes traffic *within* a service tier. An API gateway decides *which* service tier the traffic goes to. Most production systems use both — gateway at the edge, LBs behind each service cluster.
+
+---
+
+### Core Responsibilities
+
+**1. Routing**
+Maps incoming URL patterns to backend services. Can be path-based (`/users` → user-service), method-based (GET vs POST), or header-based (version routing via `API-Version: v2`).
+
+*Example: AWS API Gateway routing `GET /products/{id}` to a Lambda function and `POST /orders` to an ECS container.*
+
+**2. Authentication & Authorization**
+Validates identity (JWT, OAuth2, API keys) at the gateway layer before the request ever touches a backend. Centralizes auth logic — no service needs to re-implement it.
+
+*Example: Kong validates a Bearer token against an identity provider. Invalid token → 401 returned immediately, backend never called.*
+
+**3. Rate Limiting**
+Enforces request quotas per client/IP/API key. Protects backends from overload and prevents abuse.
+
+*Example: Free tier → 100 req/min, Pro tier → 10,000 req/min. Gateway checks a Redis counter on every request.*
+
+**4. Request/Response Transformation**
+Modifies payloads on the fly — add/strip headers, translate protocols (REST ↔ gRPC), aggregate multiple service responses into one.
+
+*Example: BFF (Backend for Frontend) pattern — mobile gateway aggregates user profile + notifications + cart into a single response, saving the mobile client 3 round trips.*
+
+**5. SSL/TLS Termination**
+Clients speak HTTPS to the gateway; internal service-to-service calls use plain HTTP on a private network. Same benefit as at the load balancer — offloads crypto overhead from application servers.
+
+**6. Observability**
+Centralized logging, metrics, and distributed tracing for all traffic. Every request passes through, so it's the natural place to capture latency, error rates, and usage analytics.
+
+---
+
+### Request Flow
+
+```
+Client
+  │  HTTPS
+  ▼
+[Load Balancer]          ← distributes across multiple gateway instances
+  │  HTTPS
+  ▼
+[API Gateway]            ← single logical entry point; all smart logic lives here
+  │  1. TLS termination
+  │  2. Auth check (JWT/API key)
+  │  3. Rate limit check (Redis)
+  │  4. Request transformation
+  │  5. Route decision: which service?
+  │
+  ├──▶ [Load Balancer]   ← distributes across instances of the target service
+  │         │
+  │         ▼
+  │    [Microservice A]  (e.g. /api/orders → order-service)
+  │
+  └──▶ [Load Balancer]
+            │
+            ▼
+       [Microservice B]  (e.g. /api/users → user-service)
+```
+
+**Where each sits:**
+- **Load Balancer (outer)** — in front of the gateway cluster. Its only job is to spread traffic evenly across multiple gateway instances so the gateway itself isn't a SPOF or bottleneck.
+- **API Gateway** — the intelligent layer. Handles all cross-cutting concerns: auth, rate limiting, routing logic, transformations.
+- **Load Balancer (inner)** — one per service, behind the gateway. Routes gateway traffic evenly across the N instances of that specific microservice.
+
+The gateway decides *where* traffic goes. The inner LBs decide *which instance* of that destination handles it.
+
+---
+
+### Key Trade-offs
+
+**Single point of failure** — all traffic flows through the gateway, so it must be highly available. Fix: run multiple instances behind a load balancer (ironically, LBs protect the gateway).
+
+**Added latency** — every request takes an extra hop + auth/rate-limit checks. Typical overhead: 1–5ms. Fix: keep auth logic fast (local JWT validation > remote token introspection), use connection pooling to backends, run gateway instances close to clients.
+
+**Bottleneck at scale** — at millions of RPS, the gateway itself can be the ceiling. Fix: horizontal scaling, stateless design (no session state in the gateway), push rate-limit counters to Redis.
+
+**Configuration complexity** — routing rules, auth policies, rate limits, and transformations can become a sprawling config mess. Fix: treat gateway config as code (Terraform, Pulumi), use declarative config (Kubernetes Gateway API, Kong declarative config).
+
+---
+
+### Usages
+
+**Request Routing** — maps URL + method to the right backend service.
+*Example: `GET /products/{id}` → product-service, `POST /orders` → order-service.*
+
+**Security Enforcement** — validates auth tokens and permissions before the request touches any backend. One place to fix, covers all services.
+*Example: invalid Bearer token → 401 at the gateway, backend never called.*
+
+**Rate Limiting**
+**Why it was needed:** APIs are vulnerable to abuse, scraping, runaway scripts, and DDoS attacks. Resource allocation also needs to be controlled based on pricing tiers.
+**What happens if we don't use it:** A single malicious or misconfigured client can overwhelm backend databases and crash the entire system. Free-tier users could consume expensive compute resources without limits.
+**Benefits over previous technology:** Blocks excessive traffic at the network edge before it ever reaches internal servers. Enforces per-client/per-tier quotas (e.g., via Redis counters) returning a `429 Too Many Requests`, protecting backend stability and enforcing business models.
+
+Enforces per-client/per-tier quotas via Redis counters. Returns `429` when exceeded.
+*Example: free tier → 100 req/min, pro → 10,000 req/min.*
+
+**Service Aggregation** — fans out to multiple services in parallel, merges into one response, eliminating client round trips.
+*Example: mobile dashboard fans out to user-service + order-service + recommendations in parallel → one JSON blob back to client.*
+
+**Protocol & Format Translation** — bridges mismatches between client and service protocols/formats without changing either side.
+*Example: client speaks REST/JSON, backend speaks gRPC — gateway translates transparently.*
+
+**Caching** — serves repeated read requests from cache, bypassing the backend entirely.
+*Example: product catalog cached at the gateway → read latency drops 10× on high-traffic pages.*
+
+---
+
+### Common Patterns
+
+**BFF (Backend for Frontend)**
+**Why it was needed:** Different clients (mobile phones, web browsers, smart TVs) have drastically different UI requirements, bandwidth limits, and processing power. A single, monolithic API couldn't serve them all optimally.
+**What happens if we don't use it:** The backend returns a massive "one-size-fits-all" JSON payload. A mobile app over a 3G network is forced to download 5MB of data just to display a simple list, wasting battery and bandwidth.
+**Benefits over previous technology:** Creates a dedicated gateway instance per client type (mobile, web, partner). Each BFF aggregates and shapes the exact data its specific client needs, minimizing payload size and optimizing the user experience.
+
+A separate gateway instance per client type (mobile, web, partner). Each BFF shapes responses for its client, avoiding the "one-size-fits-all" API problem.
+*Example: Netflix has separate BFFs for TV, mobile, and browser — each aggregates different data and formats responses to match device constraints.*
+
+**Gateway Aggregation**
+**Why it was needed:** In microservices, displaying a single UI page (like a user dashboard) often requires data from 5+ different services.
+**What happens if we don't use it:** The client makes 5 separate HTTP requests to the backend over the public internet. This causes high latency due to multiple network round trips and complicates client-side code.
+**Benefits over previous technology:** The client makes one single request to the API Gateway. The Gateway fans out requests to the internal microservices over the high-speed internal network, stitches the results together, and returns one cohesive response to the client.
+
+Fans out to multiple services in parallel, stitches results into one response, reducing client round trips.
+*Example: dashboard needs user data + activity feed + billing status → one client request, three parallel backend calls, one merged response.*
+
+**Gateway Offloading** — move cross-cutting concerns (auth, logging, SSL, compression) out of every microservice and into the gateway. Services stay focused on business logic.
+
+---
+
+### Advantages
+
+**Centralized cross-cutting concerns** — auth, rate limiting, logging, and SSL handled once at the edge instead of re-implemented in every service.
+
+**Simplified client integration** — clients talk to one stable endpoint regardless of how many services exist behind it or how they change.
+
+**Observability** — complete traffic picture (latency, error rates, usage) in one place without instrumenting every service.
+
+**Protocol flexibility** — clients and services can use different protocols/formats and evolve independently.
+
+---
+
+### Disadvantages
+
+**SPOF** — all traffic flows through it; an outage takes down everything. Requires active-active clustering, which adds infra cost.
+
+**Added latency** — extra hop + auth/rate-limit processing on every request. Typically 1–5ms, but it compounds under heavy transformation.
+
+**Vendor lock-in** — managed gateways (AWS API Gateway, Apigee) tie you to that provider's pricing and limits.
+
+**Configuration complexity** — routing rules, policies, and versioning accumulate fast. Without IaC it becomes a liability.
+
+---
+
+## LB + API Gateway in Production
+
+Both components coexist in every large system. The pattern is always the same — LB handles distribution, gateway handles intelligence.
+
+**Netflix**
+- Global DNS LB (Route 53) routes users to the nearest AWS region.
+- Inside each region, an LB (AWS ALB) spreads traffic across a cluster of Zuul gateway instances.
+- Zuul handles auth, rate limiting, and per-device BFF routing (TV vs mobile vs browser get different response shapes).
+- Behind Zuul, each microservice (streaming, recommendations, billing) has its own LB distributing across its instances.
+
+**Uber**
+- Edge LB receives all rider/driver app traffic.
+- API gateway (built on Nginx + Lua) authenticates requests, enforces rate limits, and routes by service — trips, payments, maps, notifications each get their own backend cluster.
+- Each cluster has an internal LB. At Uber's scale (~1M RPS peak), the gateway is stateless and horizontally scaled; rate-limit state lives in Redis.
+
+**AWS (as a pattern, not just a vendor)**
+- Route 53 (DNS LB) → CloudFront (edge caching + DDoS) → ALB (distributes to gateway instances) → API Gateway (auth, routing, throttling) → ALB per service → ECS/Lambda instances.
+- The outer ALB protects the gateway from being a SPOF. The inner ALBs protect individual services.
+
+**Key takeaway for interviews:** When asked to design any large system, always place an LB in front of your gateway cluster (HA for the gateway) and an LB behind it per service (distribution within each service). The gateway never talks directly to a single service instance.
+
+---
+
 ## Service Mesh vs. Load Balancer
+
+**Why it was needed:** In microservices, services must communicate with each other (east-west traffic). Initially, developers hardcoded retries, timeouts, and mutual TLS logic into every application's codebase using libraries. As the number of services and languages grew, managing and updating these networking libraries became a nightmare.
+
+**What happens if we don't use it:** Services communicate directly over the internal network without encrypted traffic (mTLS) or rely on inconsistent, language-specific libraries for circuit breaking and retries. Observability into service-to-service calls becomes fragmented and hard to trace.
+
+**Benefits over previous technology:** Compared to application-level networking libraries, a service mesh extracts networking logic entirely out of the application code into a dedicated infrastructure layer (sidecar proxies). This provides consistent security, routing, and observability across all services regardless of the language they are written in.
 
 A traditional LB handles **north-south traffic** — requests coming in from the outside world to your services. A service mesh handles **east-west traffic** — service-to-service calls inside your cluster.
 
@@ -330,3 +587,25 @@ Use a service mesh when: you have many microservices communicating with each oth
 
 The two aren't mutually exclusive — most large systems use both: an LB (AWS ALB, Nginx) at the edge for north-south, and a service mesh (Istio + Envoy) for east-west.
 
+---
+
+## Interview Pitfalls
+
+- Conflating API gateway and load balancer — know their distinct roles and that most systems use both.
+- Ignoring HA for the gateway itself — "single entry point" sounds like a SPOF until you clarify it runs as a clustered, load-balanced tier.
+- Overlooking latency impact — always mention the overhead of auth checks and when to prefer local JWT validation over remote introspection.
+- Forgetting the BFF pattern — interviewers often probe whether you know that a single monolithic gateway doesn't serve all client types well.
+- Not addressing security depth — gateway handles edge auth, but services should still validate internally (defense in depth).
+- Treating LB algorithms as interchangeable — know when to pick Least Connections over Round Robin and why IP Hash breaks on server removal.
+- Ignoring the LB as a SPOF — the same HA reasoning that applies to backends applies to the LB tier itself.
+- Conflating L4 and L7 tradeoffs — L4 for raw throughput, L7 for application-aware routing; most systems use both at different tiers.
+
+---
+
+## Recap
+
+**Load balancer** = traffic distributor. Spreads requests across instances of the same service, enforces health checks, enables horizontal scaling and zero-downtime deployments. Its concern is *which instance* handles a request.
+
+**API gateway** = smart traffic cop at the edge. Routes requests to the right service, enforces auth + rate limits, offloads cross-cutting concerns, and provides a single observability point — so microservices stay focused on business logic. Its concern is *which service* and *what to do before and after*.
+
+In production: LB in front of the gateway cluster (HA for the gateway) → gateway (auth, routing, rate limits) → LB per service cluster (distribution within each service) → service instances.
