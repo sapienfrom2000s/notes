@@ -28,7 +28,8 @@ tldr; It solves the problem of 'it works on my system'
 Before docker, in order to setup a dev environment, a dev had to go through a lot of hassle - google the error, find answers in
 blogs, stackoverflow and run it. Two different devs who tried to setup the same environment might have different results due to
 various reasons like different OS versions, package managers, etc. Docker came up and said, I don't care what is the underlying
-dependencies, I will give you sort of an isolated system where you can replicate the same environment w/o any conflicts.
+dependencies, I will give you sort of an isolated system where you can replicate the same environment across different machines
+and OS's w/o any conflicts.
 
 ## Namespaces, Cgroups and chroot
 
