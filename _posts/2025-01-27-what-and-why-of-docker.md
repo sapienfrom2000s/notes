@@ -2,7 +2,7 @@
 title: "What and Why of Docker"
 date: 2025-11-01 12:00:00 +0000
 categories: [Docker]
-tags: [docker]
+tags: [docker, R1]
 ---
 
 
