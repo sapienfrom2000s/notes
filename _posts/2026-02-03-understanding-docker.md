@@ -56,7 +56,7 @@ cgroups are a Linux kernel feature that allow you to put limits on resource usag
 
 ## Container Runtime
 
-Container Runtime is a software who is responsible for managing the lifecycle of a container ie. starting, stopping, restarting a container. Eg.- Containerd, CRI-O, runc.
+A Container Runtime is the software responsible for managing the lifecycle of a container (starting, stopping, restarting, etc.). There are two layers of container runtimes: high-level runtimes like containerd and CRI-O, which handle image pulling, storage, networking, and expose APIs (like CRI for Kubernetes); and low-level (OCI) runtimes like runc, which do the actual work of creating and running the container using namespaces and cgroups. High-level runtimes don't run containers directly — they delegate that job to a low-level runtime such as runc.
 Docker uses containerd as container runtime by default.
 
 ## Container vs VM
@@ -81,7 +81,7 @@ From docker - "A container image is a standardized package that includes all of 
 ## Docker Networking
 
 1. https://www.youtube.com/watch?v=j_UUnlVC2Ss(Also, check what is a switch device)
-2. https://docs.docker.com/engine/network/(Just focus on bridge, host and none)
+2. https://docs.docker.com/engine/network/(Just focus on bridge, host, overlay and none)
 
 ## OverlayFS(Image Layering)
 
@@ -218,8 +218,7 @@ Containers are lightweight, isolated runtime instances sharing the host OS kerne
 
 14. COPY vs ADD. Which one to use?
 
--> COPY just supports copying local files. ADD supports copying local files, remote files, and archives. Docker's official documentation recommends using COPY for 
-most cases. Reserve ADD only for scenarios where you specifically need its unique, automatic tar extraction capability for a local file.
+-> COPY just supports copying local files. ADD supports copying local files, remote files, and archives. Docker's official documentation recommends using COPY for most cases. Reserve ADD only for scenarios where you specifically need its unique, automatic tar extraction capability for a local file.
 
 15. How to inspect an image?
 
@@ -232,7 +231,7 @@ most cases. Reserve ADD only for scenarios where you specifically need its uniqu
    3. Remove unnecessary files and dependencies.
    4. Use a smaller version of the programming language or framework.
    5. Use a smaller version of the operating system.
-   6. Use distroless images.
+   6. Use distroless(A distroless image contains only the application and its runtime dependencies, without the usual Linux distribution tools, packages, or shell) images.
 
 17. How to create custom network? What network driver is used by default?
 
@@ -252,7 +251,7 @@ most cases. Reserve ADD only for scenarios where you specifically need its uniqu
 
 20. How do you secure docker containers?
 
--> Use minimal base images (alpine/distroless)
+-> Use minimal base images (alpine/distroless) - Less attack surface, smaller image size.
   Scan images for vulnerabilities (Trivy, Grype)
   Pin image versions, never use latest
   Run containers as non-root users
