@@ -2,7 +2,7 @@
 title: "Understanding Docker"
 date: 2026-02-03 13:00:00 +0530
 categories: [Docker]
-tags: [docker]
+tags: [docker, obsidian]
 ---
 
 # Contents
